@@ -1,0 +1,5 @@
+streamlit
+mlflow
+pandas
+scikit-learn
+boto3

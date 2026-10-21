@@ -1,0 +1,166 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: mlflow-dag
+  namespace: argo
+spec:
+  entrypoint: pipeline
+  templates:
+
+  - name: pipeline
+    dag:
+      tasks:
+      - name: preprocess
+        template: preprocess
+
+      - name: train
+        template: train
+        dependencies: [preprocess]
+        arguments:
+          artifacts:
+          - name: preprocessed
+            from: "{{tasks.preprocess.outputs.artifacts.preprocessed}}"
+
+      - name: evaluate
+        template: evaluate
+        dependencies: [train]
+        arguments:
+          artifacts:
+          - name: model
+            from: "{{tasks.train.outputs.artifacts.model}}"
+          - name: preprocessed
+            from: "{{tasks.preprocess.outputs.artifacts.preprocessed}}"
+
+      - name: push-metrics
+        template: push-metrics
+        dependencies: [evaluate]
+        arguments:
+          parameters:
+            - name: accuracy
+              value: "{{tasks.evaluate.outputs.parameters.accuracy}}"
+            - name: loss
+              value: "{{tasks.evaluate.outputs.parameters.loss}}"
+
+  - name: preprocess
+    container:
+      image: localhost:5001/mlflow-dag:latest
+      imagePullPolicy: IfNotPresent
+      env:
+      - name: MLFLOW_TRACKING_URI
+        value: "http://mlflow-svc.mlflow.svc.cluster.local:5000"
+      - name: AWS_ACCESS_KEY_ID
+        valueFrom:
+          secretKeyRef:
+            name: minio-cred
+            key: accesskey
+      - name: AWS_SECRET_ACCESS_KEY
+        valueFrom:
+          secretKeyRef:
+            name: minio-cred
+            key: secretkey
+      - name: MLFLOW_S3_ENDPOINT_URL
+        value: "http://minio.argo.svc.cluster.local:9000"
+      - name: MLFLOW_S3_IGNORE_TLS
+        value: "true"
+      - name: AWS_REGION
+        value: "us-east-1"
+      command: ["/bin/sh", "-c", "mkdir -p /outputs && python /preprocess.py"]
+    outputs:
+      artifacts:
+      - name: preprocessed
+        path: /outputs/preprocessed.csv
+
+  - name: train
+    inputs:
+      artifacts:
+      - name: preprocessed
+        path: /inputs/preprocessed.csv
+    container:
+      image: localhost:5001/mlflow-dag:latest
+      imagePullPolicy: IfNotPresent
+      env:
+      - name: MLFLOW_TRACKING_URI
+        value: "http://mlflow-svc.mlflow.svc.cluster.local:5000"
+      - name: AWS_ACCESS_KEY_ID
+        valueFrom:
+          secretKeyRef:
+            name: minio-cred
+            key: accesskey
+      - name: AWS_SECRET_ACCESS_KEY
+        valueFrom:
+          secretKeyRef:
+            name: minio-cred
+            key: secretkey
+      - name: MLFLOW_S3_ENDPOINT_URL
+        value: "http://minio.argo.svc.cluster.local:9000"
+      - name: MLFLOW_S3_IGNORE_TLS
+        value: "true"
+      - name: AWS_REGION
+        value: "us-east-1"
+      command: ["/bin/sh", "-c", "mkdir -p /outputs && python /train.py"]
+    outputs:
+      artifacts:
+      - name: model
+        path: /outputs/model.pkl
+
+  - name: evaluate
+    inputs:
+      artifacts:
+      - name: model
+        path: /inputs/model.pkl
+      - name: preprocessed
+        path: /inputs/preprocessed.csv
+    container:
+      image: localhost:5001/mlflow-dag:latest
+      imagePullPolicy: IfNotPresent
+      env:
+      - name: MLFLOW_TRACKING_URI
+        value: "http://mlflow-svc.mlflow.svc.cluster.local:5000"
+      - name: AWS_ACCESS_KEY_ID
+        valueFrom:
+          secretKeyRef:
+            name: minio-cred
+            key: accesskey
+      - name: AWS_SECRET_ACCESS_KEY
+        valueFrom:
+          secretKeyRef:
+            name: minio-cred
+            key: secretkey
+      - name: MLFLOW_S3_ENDPOINT_URL
+        value: "http://minio.argo.svc.cluster.local:9000"
+      - name: MLFLOW_S3_IGNORE_TLS
+        value: "true"
+      - name: AWS_REGION
+        value: "us-east-1"
+      command: ["/bin/sh", "-c", "mkdir -p /outputs && python /evaluate.py"]
+    outputs:
+      parameters:
+        - name: accuracy
+          valueFrom:
+            path: /outputs/accuracy
+        - name: loss
+          valueFrom:
+            path: /outputs/loss
+
+  - name: push-metrics
+    container:
+      image: localhost:5001/mlflow-dag:latest
+      imagePullPolicy: IfNotPresent
+      command: ["python", "-c"]
+      args:
+        - |
+          import requests
+          accuracy = {{inputs.parameters.accuracy}}
+          loss = {{inputs.parameters.loss}}
+          data = f"""
+          model_accuracy {accuracy}
+          model_loss {loss}
+          """
+          requests.post(
+            "http://pushgateway-prometheus-pushgateway.monitoring.svc.cluster.local:9091/metrics/job/model_training",
+            data=data
+          )
+    inputs:
+      parameters:
+        - name: accuracy
+        - name: loss

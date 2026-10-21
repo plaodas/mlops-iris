@@ -1,0 +1,90 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlflow-pvc
+  namespace: mlflow
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-cred
+  namespace: mlflow
+stringData:
+  accesskey: "minio"
+  secretkey: "minio123"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+  namespace: mlflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mlflow
+  template:
+    metadata:
+      labels:
+        app: mlflow
+    spec:
+      containers:
+      - name: mlflow
+        # Use a prebuilt image with boto3/botocore installed for reliable S3 access.
+        # Build with: scripts/build_mlflow_image.sh -> localhost:5001/mlflow:with-boto3
+        image: localhost:5001/mlflow:with-boto3
+        imagePullPolicy: IfNotPresent
+        # Run the mlflow server directly (no runtime pip install)
+        args:
+          - "mlflow"
+          - "server"
+          - "--host"
+          - "0.0.0.0"
+          - "--port"
+          - "5000"
+          - "--backend-store-uri"
+          - "sqlite:////mlflow/mlflow.db"
+          - "--default-artifact-root"
+          - "s3://mlflow-artifacts"
+          - "--allowed-hosts"
+          - "*"
+          - "--cors-allowed-origins"
+          - "http://localhost:3000,https://example.com"
+        env:
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: minio-cred
+                key: accesskey
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: minio-cred
+                key: secretkey
+          - name: MLFLOW_S3_ENDPOINT_URL
+            value: "http://minio.argo.svc.cluster.local:9000"
+          - name: AWS_REGION
+            value: "us-east-1"
+        ports:
+          - containerPort: 5000
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "500m"
+            memory: "1Gi"
+        volumeMounts:
+          - name: mlflow-data
+            mountPath: /mlflow
+      volumes:
+        - name: mlflow-data
+          persistentVolumeClaim:
+            claimName: mlflow-pvc

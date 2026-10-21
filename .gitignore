@@ -1,0 +1,13 @@
+# Ignore generated certs for local development
+/scripts/*.pem
+.venv/
+.mypy_cache/
+__pycache__/
+
+# Local investigation dumps
+*.log
+tmp/
+artifacts/
+
+# Local MLflow sqlite (may contain absolute home paths)
+mlflow.db
