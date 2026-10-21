@@ -1,5 +1,10 @@
 # Iris MLOps ラボ
 
+```
+以前作った作業履歴のみのリポジトリをLLMでまとめ直しました。 
+```
+
+
 Kind 上で Iris 分類モデルを **学習 → 登録 → 推論 → 可視化 → 監視** まで通す、ローカル向けの MLOps 構成です。
 
 Kubernetes、MLflow、MinIO、Argo Workflows、FastAPI、Streamlit、Prometheus / Grafana を一つのクラスターに置いてあります。農業センサーや生育ステージの監視は含みません。
